@@ -25,7 +25,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build g++ pkg-config \
-            glslang-tools libvulkan-dev libx11-dev
+            glslang-tools spirv-headers libvulkan-dev libx11-dev
 
       - name: Configure (x11 backend enabled)
         run: meson setup build-x11 --buildtype=release -Dappend_libdir_vkbasalt=true

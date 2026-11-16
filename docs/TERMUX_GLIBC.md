@@ -12,12 +12,13 @@ It is **not** needed for the bionic Termux packages.
 |---|---|
 | `meson`, `ninja` | build system |
 | `glslang` | `glslangValidator` compiles the `.glsl` effects into headers at build time |
+| `spirv-headers` | `src/reshade/spirv.hpp` includes `spirv/unified1/spirv.hpp`; the build fails without it |
 | `vulkan-loader` / `libvulkan` | only needed at runtime |
 | `libx11` (optional) | only for the toggle hotkey, see below |
 
 On a glibc prefix these come from the distribution package manager, for example
-`pacman -S meson ninja glslang vulkan-icd-loader libx11` or
-`apt install meson ninja-build glslang-tools libvulkan-dev libx11-dev`.
+`pacman -S meson ninja glslang spirv-headers vulkan-icd-loader libx11` or
+`apt install meson ninja-build glslang-tools spirv-headers libvulkan-dev libx11-dev`.
 
 ## Build
 
