@@ -319,6 +319,8 @@ namespace vkBasalt
     // The real extent is cached per surface because vkCreateSwapchainKHR needs it and by
     // then the capabilities have already been rewritten.
     static std::unordered_map<VkSurfaceKHR, VkExtent2D> surfaceRealExtent;
+    static VkSurfaceKHR                                 lastSurface = VK_NULL_HANDLE;
+    static VkExtent2D                                   lastRealExtent{};
 
     static void applyUpscaleToSurfaceCapabilities(VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* pSurfaceCapabilities)
     {
@@ -327,6 +329,8 @@ namespace vkBasalt
             return;
 
         surfaceRealExtent[surface] = pSurfaceCapabilities->currentExtent;
+        lastSurface                = surface;
+        lastRealExtent             = pSurfaceCapabilities->currentExtent;
 
         float factor = pConfig->getOption<float>("upscaleFactor", 1.0f);
         if (factor >= 0.999f || factor <= 0.0f)
@@ -424,9 +428,16 @@ namespace vkBasalt
         {
             // the real swapchain always has the surface size, the application renders into
             // the smaller fake images
-            auto realExtent = surfaceRealExtent.find(pCreateInfo->surface);
-            if (realExtent != surfaceRealExtent.end() && realExtent->second.width && realExtent->second.height)
-                modifiedCreateInfo.imageExtent = realExtent->second;
+            auto  realExtent = surfaceRealExtent.find(pCreateInfo->surface);
+            bool  found      = realExtent != surfaceRealExtent.end() && realExtent->second.width && realExtent->second.height;
+            VkExtent2D real  = found ? realExtent->second : lastRealExtent;
+
+            Logger::debug("swapchain: surface " + std::to_string((unsigned long long)pCreateInfo->surface) + " app extent "
+                          + std::to_string(pLogicalSwapchain->renderExtent.width) + "x" + std::to_string(pLogicalSwapchain->renderExtent.height)
+                          + (found ? " cached " : " not cached, last ") + std::to_string(real.width) + "x" + std::to_string(real.height));
+
+            if (real.width && real.height)
+                modifiedCreateInfo.imageExtent = real;
         }
         pLogicalSwapchain->imageExtent         = modifiedCreateInfo.imageExtent;
         pLogicalSwapchain->format              = modifiedCreateInfo.imageFormat;
@@ -481,6 +492,9 @@ namespace vkBasalt
             createFakeSwapchainImages(pLogicalDevice, effectCreateInfo, fakeImageCount, pLogicalSwapchain->fakeImageMemory);
         bool scaled = pLogicalSwapchain->renderExtent.width != pLogicalSwapchain->imageExtent.width
                       || pLogicalSwapchain->renderExtent.height != pLogicalSwapchain->imageExtent.height;
+        Logger::debug(std::string("upscale: ") + (scaled ? "enabled" : "disabled") + ", render "
+                      + std::to_string(pLogicalSwapchain->renderExtent.width) + "x" + std::to_string(pLogicalSwapchain->renderExtent.height) + " -> "
+                      + std::to_string(pLogicalSwapchain->imageExtent.width) + "x" + std::to_string(pLogicalSwapchain->imageExtent.height));
         if (scaled)
         {
             // images the application actually renders into, at the reduced extent
