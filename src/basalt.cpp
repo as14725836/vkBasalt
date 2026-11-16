@@ -38,6 +38,7 @@
 #include "effect_lut.hpp"
 #include "effect_reshade.hpp"
 #include "effect_transfer.hpp"
+#include "effect_upscale.hpp"
 
 #define VKBASALT_NAME "VK_LAYER_VKBASALT_post_processing"
 
@@ -313,6 +314,46 @@ namespace vkBasalt
         deviceMap.erase(GetKey(device));
     }
 
+    // With upscaleFactor < 1.0 we report a smaller currentExtent to the application so it
+    // renders at that resolution, and we upscale to the real surface size on present.
+    // The real extent is cached per surface because vkCreateSwapchainKHR needs it and by
+    // then the capabilities have already been rewritten.
+    static std::unordered_map<VkSurfaceKHR, VkExtent2D> surfaceRealExtent;
+
+    VKAPI_ATTR VkResult VKAPI_CALL vkBasalt_GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice          physicalDevice,
+                                                                                    VkSurfaceKHR              surface,
+                                                                                    VkSurfaceCapabilitiesKHR* pSurfaceCapabilities)
+    {
+        scoped_lock l(globalLock);
+
+        VkResult result =
+            instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities);
+        if (result != VK_SUCCESS)
+            return result;
+
+        // 0xFFFFFFFF means "the application decides", there is no extent we could scale
+        if (pSurfaceCapabilities->currentExtent.width == 0xFFFFFFFF)
+            return result;
+
+        surfaceRealExtent[surface] = pSurfaceCapabilities->currentExtent;
+
+        float factor = pConfig->getOption<float>("upscaleFactor", 1.0f);
+        if (factor >= 0.999f || factor <= 0.0f)
+            return result;
+
+        VkExtent2D scaled = {(uint32_t)(pSurfaceCapabilities->currentExtent.width * factor),
+                             (uint32_t)(pSurfaceCapabilities->currentExtent.height * factor)};
+        scaled.width      = std::max(1u, std::min(scaled.width, pSurfaceCapabilities->maxImageExtent.width));
+        scaled.height     = std::max(1u, std::min(scaled.height, pSurfaceCapabilities->maxImageExtent.height));
+
+        Logger::debug("upscale: reporting render extent " + std::to_string(scaled.width) + "x" + std::to_string(scaled.height) + " for surface "
+                      + std::to_string((unsigned long long)surface));
+
+        pSurfaceCapabilities->currentExtent = scaled;
+
+        return result;
+    }
+
     VKAPI_ATTR VkResult VKAPI_CALL vkBasalt_CreateSwapchainKHR(VkDevice                        device,
                                                                const VkSwapchainCreateInfoKHR* pCreateInfo,
                                                                const VkAllocationCallbacks*    pAllocator,
@@ -356,6 +397,14 @@ namespace vkBasalt
         std::shared_ptr<LogicalSwapchain> pLogicalSwapchain(new LogicalSwapchain());
         pLogicalSwapchain->pLogicalDevice      = pLogicalDevice;
         pLogicalSwapchain->swapchainCreateInfo = *pCreateInfo;
+        pLogicalSwapchain->renderExtent        = modifiedCreateInfo.imageExtent;
+        {
+            // the real swapchain always has the surface size, the application renders into
+            // the smaller fake images
+            auto realExtent = surfaceRealExtent.find(pCreateInfo->surface);
+            if (realExtent != surfaceRealExtent.end() && realExtent->second.width && realExtent->second.height)
+                modifiedCreateInfo.imageExtent = realExtent->second;
+        }
         pLogicalSwapchain->imageExtent         = modifiedCreateInfo.imageExtent;
         pLogicalSwapchain->format              = modifiedCreateInfo.imageFormat;
         pLogicalSwapchain->imageCount          = 0;
@@ -388,7 +437,9 @@ namespace vkBasalt
         if (pLogicalSwapchain->fakeImages.size())
         {
             *pCount = std::min<uint32_t>(*pCount, pLogicalSwapchain->imageCount);
-            std::memcpy(pSwapchainImages, pLogicalSwapchain->fakeImages.data(), sizeof(VkImage) * (*pCount));
+            std::memcpy(pSwapchainImages,
+                    pLogicalSwapchain->renderImages.size() ? pLogicalSwapchain->renderImages.data() : pLogicalSwapchain->fakeImages.data(),
+                    sizeof(VkImage) * (*pCount));
             return *pCount < pLogicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
         }
 
@@ -401,8 +452,20 @@ namespace vkBasalt
         // create 1 more set of images when we can't use the swapchain it self
         uint32_t fakeImageCount = pLogicalSwapchain->imageCount * (effectStrings.size() + !pLogicalDevice->supportsMutableFormat);
 
+        VkSwapchainCreateInfoKHR effectCreateInfo = pLogicalSwapchain->swapchainCreateInfo;
+        effectCreateInfo.imageExtent              = pLogicalSwapchain->imageExtent;
         pLogicalSwapchain->fakeImages =
-            createFakeSwapchainImages(pLogicalDevice, pLogicalSwapchain->swapchainCreateInfo, fakeImageCount, pLogicalSwapchain->fakeImageMemory);
+            createFakeSwapchainImages(pLogicalDevice, effectCreateInfo, fakeImageCount, pLogicalSwapchain->fakeImageMemory);
+        bool scaled = pLogicalSwapchain->renderExtent.width != pLogicalSwapchain->imageExtent.width
+                      || pLogicalSwapchain->renderExtent.height != pLogicalSwapchain->imageExtent.height;
+        if (scaled)
+        {
+            // images the application actually renders into, at the reduced extent
+            pLogicalSwapchain->renderImages = createFakeSwapchainImages(
+                pLogicalDevice, pLogicalSwapchain->swapchainCreateInfo, pLogicalSwapchain->imageCount, pLogicalSwapchain->renderImageMemory);
+            Logger::debug("created reduced render images " + std::to_string(pLogicalSwapchain->renderExtent.width) + "x"
+                          + std::to_string(pLogicalSwapchain->renderExtent.height));
+        }
         Logger::debug("created fake swapchain images");
 
         VkFormat unormFormat = convertToUNORM(pLogicalSwapchain->format);
@@ -490,6 +553,22 @@ namespace vkBasalt
                 pConfig.get())));
         }
 
+        if (scaled)
+        {
+            // the application rendered at renderExtent, everything after this runs at imageExtent
+            pLogicalSwapchain->effects.insert(
+                pLogicalSwapchain->effects.begin(),
+                std::shared_ptr<Effect>(new UpscaleEffect(pLogicalDevice,
+                                                          pLogicalSwapchain->format,
+                                                          pLogicalSwapchain->renderExtent,
+                                                          pLogicalSwapchain->imageExtent,
+                                                          pLogicalSwapchain->renderImages,
+                                                          std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(),
+                                                                               pLogicalSwapchain->fakeImages.begin()
+                                                                                   + pLogicalSwapchain->imageCount),
+                                                          pConfig.get())));
+            Logger::debug("created UpscaleEffect");
+        }
         VkImageView depthImageView = pLogicalDevice->depthImageViews.size() ? pLogicalDevice->depthImageViews[0] : VK_NULL_HANDLE;
         VkImage     depthImage     = pLogicalDevice->depthImageViews.size() ? pLogicalDevice->depthImages[0] : VK_NULL_HANDLE;
         VkFormat    depthFormat    = pLogicalDevice->depthImageViews.size() ? pLogicalDevice->depthFormats[0] : VK_FORMAT_UNDEFINED;
@@ -513,13 +592,26 @@ namespace vkBasalt
         }
         Logger::trace("vkGetSwapchainImagesKHR");
 
-        pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new TransferEffect(
-            pLogicalDevice,
-            pLogicalSwapchain->format,
-            pLogicalSwapchain->imageExtent,
-            std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(), pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount),
-            pLogicalSwapchain->images,
-            pConfig.get()));
+        if (scaled)
+        {
+            pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new UpscaleEffect(pLogicalDevice,
+                                                                                          pLogicalSwapchain->format,
+                                                                                          pLogicalSwapchain->renderExtent,
+                                                                                          pLogicalSwapchain->imageExtent,
+                                                                                          pLogicalSwapchain->renderImages,
+                                                                                          pLogicalSwapchain->images,
+                                                                                          pConfig.get()));
+        }
+        else
+        {
+            pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new TransferEffect(
+                pLogicalDevice,
+                pLogicalSwapchain->format,
+                pLogicalSwapchain->imageExtent,
+                std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(), pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount),
+                pLogicalSwapchain->images,
+                pConfig.get()));
+        }
 
         pLogicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(pLogicalDevice, pLogicalSwapchain->imageCount);
 
@@ -536,7 +628,9 @@ namespace vkBasalt
         }
 
         *pCount = std::min<uint32_t>(*pCount, pLogicalSwapchain->imageCount);
-        std::memcpy(pSwapchainImages, pLogicalSwapchain->fakeImages.data(), sizeof(VkImage) * (*pCount));
+        std::memcpy(pSwapchainImages,
+                    pLogicalSwapchain->renderImages.size() ? pLogicalSwapchain->renderImages.data() : pLogicalSwapchain->fakeImages.data(),
+                    sizeof(VkImage) * (*pCount));
         return *pCount < pLogicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
@@ -855,6 +949,7 @@ extern "C"
     GETPROCADDR(EnumerateInstanceExtensionProperties); \
     GETPROCADDR(CreateInstance); \
     GETPROCADDR(DestroyInstance); \
+    GETPROCADDR(GetPhysicalDeviceSurfaceCapabilitiesKHR); \
 \
     /* device chain functions we intercept*/ \
     if (!std::strcmp(pName, "vkGetDeviceProcAddr")) \

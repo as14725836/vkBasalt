@@ -21,6 +21,15 @@ namespace vkBasalt
             {
                 pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, fakeImages[i], nullptr);
             }
+            if (renderImages.size())
+            {
+                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, renderImageMemory, nullptr);
+                for (uint32_t i = 0; i < renderImages.size(); i++)
+                {
+                    pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, renderImages[i], nullptr);
+                }
+                renderImages.clear();
+            }
 
             for (unsigned int i = 0; i < imageCount; i++)
             {

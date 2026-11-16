@@ -14,7 +14,11 @@ shader_src = [
     'smaa_neighbor.vert.glsl',
 ]
 
-glsl_compiler = find_program('glslangValidator')
+if get_option('glslang') != ''
+    glsl_compiler = find_program(get_option('glslang'))
+else
+    glsl_compiler = find_program('glslangValidator')
+endif
 glsl_generator = generator(glsl_compiler,
     output    : [ '@BASENAME@.h' ],
     arguments : [ '-V', '-x', '@INPUT@', '-o', '@OUTPUT@' ])
