@@ -320,6 +320,29 @@ namespace vkBasalt
     // then the capabilities have already been rewritten.
     static std::unordered_map<VkSurfaceKHR, VkExtent2D> surfaceRealExtent;
 
+    static void applyUpscaleToSurfaceCapabilities(VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* pSurfaceCapabilities)
+    {
+        // 0xFFFFFFFF means "the application decides", there is no extent we could scale
+        if (pSurfaceCapabilities->currentExtent.width == 0xFFFFFFFF)
+            return;
+
+        surfaceRealExtent[surface] = pSurfaceCapabilities->currentExtent;
+
+        float factor = pConfig->getOption<float>("upscaleFactor", 1.0f);
+        if (factor >= 0.999f || factor <= 0.0f)
+            return;
+
+        VkExtent2D scaled = {(uint32_t)(pSurfaceCapabilities->currentExtent.width * factor),
+                             (uint32_t)(pSurfaceCapabilities->currentExtent.height * factor)};
+        scaled.width      = std::max(1u, std::min(scaled.width, pSurfaceCapabilities->maxImageExtent.width));
+        scaled.height     = std::max(1u, std::min(scaled.height, pSurfaceCapabilities->maxImageExtent.height));
+
+        Logger::debug("upscale: reporting render extent " + std::to_string(scaled.width) + "x" + std::to_string(scaled.height) + " for surface "
+                      + std::to_string((unsigned long long)surface));
+
+        pSurfaceCapabilities->currentExtent = scaled;
+    }
+
     VKAPI_ATTR VkResult VKAPI_CALL vkBasalt_GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice          physicalDevice,
                                                                                     VkSurfaceKHR              surface,
                                                                                     VkSurfaceCapabilitiesKHR* pSurfaceCapabilities)
@@ -331,26 +354,26 @@ namespace vkBasalt
         if (result != VK_SUCCESS)
             return result;
 
-        // 0xFFFFFFFF means "the application decides", there is no extent we could scale
-        if (pSurfaceCapabilities->currentExtent.width == 0xFFFFFFFF)
+        applyUpscaleToSurfaceCapabilities(surface, pSurfaceCapabilities);
+        return result;
+    }
+
+    // DXVK and most modern WSI code use the KHR variant, the plain one is not enough
+    VKAPI_ATTR VkResult VKAPI_CALL vkBasalt_GetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice                       physicalDevice,
+                                                                                     const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+                                                                                     VkSurfaceCapabilities2KHR* pSurfaceCapabilities)
+    {
+        scoped_lock l(globalLock);
+
+        auto& dispatch = instanceDispatchMap[GetKey(physicalDevice)];
+        if (!dispatch.GetPhysicalDeviceSurfaceCapabilities2KHR)
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+        VkResult result = dispatch.GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities);
+        if (result != VK_SUCCESS)
             return result;
 
-        surfaceRealExtent[surface] = pSurfaceCapabilities->currentExtent;
-
-        float factor = pConfig->getOption<float>("upscaleFactor", 1.0f);
-        if (factor >= 0.999f || factor <= 0.0f)
-            return result;
-
-        VkExtent2D scaled = {(uint32_t)(pSurfaceCapabilities->currentExtent.width * factor),
-                             (uint32_t)(pSurfaceCapabilities->currentExtent.height * factor)};
-        scaled.width      = std::max(1u, std::min(scaled.width, pSurfaceCapabilities->maxImageExtent.width));
-        scaled.height     = std::max(1u, std::min(scaled.height, pSurfaceCapabilities->maxImageExtent.height));
-
-        Logger::debug("upscale: reporting render extent " + std::to_string(scaled.width) + "x" + std::to_string(scaled.height) + " for surface "
-                      + std::to_string((unsigned long long)surface));
-
-        pSurfaceCapabilities->currentExtent = scaled;
-
+        applyUpscaleToSurfaceCapabilities(pSurfaceInfo->surface, &pSurfaceCapabilities->surfaceCapabilities);
         return result;
     }
 
@@ -950,6 +973,7 @@ extern "C"
     GETPROCADDR(CreateInstance); \
     GETPROCADDR(DestroyInstance); \
     GETPROCADDR(GetPhysicalDeviceSurfaceCapabilitiesKHR); \
+    GETPROCADDR(GetPhysicalDeviceSurfaceCapabilities2KHR); \
 \
     /* device chain functions we intercept*/ \
     if (!std::strcmp(pName, "vkGetDeviceProcAddr")) \
