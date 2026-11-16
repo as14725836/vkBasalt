@@ -558,7 +558,7 @@ namespace vkBasalt
             // the application rendered at renderExtent, everything after this runs at imageExtent
             pLogicalSwapchain->effects.insert(
                 pLogicalSwapchain->effects.begin(),
-                std::shared_ptr<Effect>(new UpscaleEffect(pLogicalDevice,
+                createUpscaleEffect(pLogicalDevice,
                                                           pLogicalSwapchain->format,
                                                           pLogicalSwapchain->renderExtent,
                                                           pLogicalSwapchain->imageExtent,
@@ -566,7 +566,7 @@ namespace vkBasalt
                                                           std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(),
                                                                                pLogicalSwapchain->fakeImages.begin()
                                                                                    + pLogicalSwapchain->imageCount),
-                                                          pConfig.get())));
+                                                          pConfig.get()));
             Logger::debug("created UpscaleEffect");
         }
         VkImageView depthImageView = pLogicalDevice->depthImageViews.size() ? pLogicalDevice->depthImageViews[0] : VK_NULL_HANDLE;
@@ -594,13 +594,13 @@ namespace vkBasalt
 
         if (scaled)
         {
-            pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new UpscaleEffect(pLogicalDevice,
+            pLogicalSwapchain->defaultTransfer = createUpscaleEffect(pLogicalDevice,
                                                                                           pLogicalSwapchain->format,
                                                                                           pLogicalSwapchain->renderExtent,
                                                                                           pLogicalSwapchain->imageExtent,
                                                                                           pLogicalSwapchain->renderImages,
                                                                                           pLogicalSwapchain->images,
-                                                                                          pConfig.get()));
+                                                                                          pConfig.get());
         }
         else
         {

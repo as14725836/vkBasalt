@@ -21,6 +21,9 @@ namespace vkBasalt
 #include "full_screen_triangle.vert.h"
     };
 
+    const std::vector<uint32_t> easu_frag = {
+#include "easu.frag.h"
+    };
     const std::vector<uint32_t> fxaa_frag = {
 #include "fxaa.frag.h"
     };
