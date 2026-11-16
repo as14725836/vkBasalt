@@ -1,3 +1,5 @@
 option('with_so', type : 'boolean', value : true, description : 'install the library')
 option('with_json', type : 'boolean', value : true, description : 'install the json')
 option('append_libdir_vkbasalt', type : 'boolean', value : false, description: 'Append "vkbasalt" to libdir path or not.')
+option('x11', type : 'boolean', value : true, description : 'build the X11 keyboard backend for the toggle hotkey')
+option('glslang', type : 'string', value : '', description : 'path to glslangValidator if it is not in PATH')

@@ -3,3 +3,5 @@
 *.so
 *.o
 build*/
+build-termux/
+b-nox11/

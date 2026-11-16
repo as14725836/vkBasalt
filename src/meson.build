@@ -39,7 +39,12 @@ vkBasalt_src = [
     'vkdispatch.cpp',
 ]
 
-x11_dep = dependency('x11')
+x11_deps = []
+keyboard_input_link = []
+keyboard_input_cpp_args = []
+if get_option('x11')
+    x11_deps = [dependency('x11')]
+endif
 
 conf_paths = configuration_data()
 conf_paths.set_quoted('SYSCONFDIR', join_paths(get_option('prefix'), get_option('sysconfdir')))
@@ -48,15 +53,21 @@ conf_paths.set_quoted('DATADIR', join_paths(get_option('prefix'), get_option('da
 configure_file(output: 'config_paths.hpp',
                configuration : conf_paths)
 
-# X11/X.h library contains many definitions (e.g. None)
-# which conflicts with the rest codebase with with Meson --unity=on option
-keyboard_input_x11_lib = static_library('keyboard_input_x11', 'keyboard_input_x11.cpp')
+if get_option('x11')
+    # X11/X.h library contains many definitions (e.g. None)
+    # which conflicts with the rest codebase with with Meson --unity=on option
+    keyboard_input_link = [static_library('keyboard_input_x11', 'keyboard_input_x11.cpp')]
+else
+    # no X11: the toggle hotkey is unavailable, everything else keeps working
+    keyboard_input_cpp_args = ['-DVKBASALT_X11=0']
+endif
 
 shared_library(meson.project_name().to_lower(), 
     vkBasalt_src, shader_include,
-    link_with: [keyboard_input_x11_lib],
+    link_with: keyboard_input_link,
     include_directories : vkBasalt_include_path,
-    dependencies : [x11_dep, reshade_dep],
+    cpp_args : keyboard_input_cpp_args,
+    dependencies : [reshade_dep] + x11_deps,
     gnu_symbol_visibility: 'hidden',
     install : true,
     install_dir : lib_dir)
