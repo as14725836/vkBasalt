@@ -17,7 +17,7 @@ layout(constant_id = 1) const float outputHeight = 1080.0;
 layout(location = 0) in vec2 textureCoord;
 layout(location = 0) out vec4 fragColor;
 
-void gatherAt(vec2 p, out vec4 R, out vec4 G, out vec4 B)
+void gatherAtUnused(vec2 p, out vec4 R, out vec4 G, out vec4 B)
 {
     vec2 sz   = vec2(textureSize(img, 0));
     vec2 o    = 1.0 / sz;
@@ -29,6 +29,16 @@ void gatherAt(vec2 p, out vec4 R, out vec4 G, out vec4 B)
     R = vec4(s00.r, s10.r, s01.r, s11.r);
     G = vec4(s00.g, s10.g, s01.g, s11.g);
     B = vec4(s00.b, s10.b, s01.b, s11.b);
+}
+
+vec3 tapAt(vec2 fp, vec2 off, vec2 inSize)
+{
+    return textureLod(img, (fp + off + 0.5) / inSize, 0.0).rgb;
+}
+
+float luma(vec3 c)
+{
+    return c.b * 0.5 + (c.r * 0.5 + c.g);
 }
 
 void easuTap(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c)
@@ -87,7 +97,6 @@ void main()
 {
     vec2 inSize  = vec2(textureSize(img, 0));
     vec2 outSize = vec2(outputWidth, outputHeight);
-    vec2 o       = 1.0 / inSize;
 
     ivec2 ip = ivec2(gl_FragCoord.xy);
 
@@ -99,38 +108,26 @@ void main()
     vec2 fp = floor(pp);
     pp -= fp;
 
-    // con1 = {1/inW, 1/inH, -1/inW, -1/inH}, con2 = {-1/inW, 2/inH, 1/inW, 2/inH}, con3 = {0, 4/inH, 0, 0}
-    vec2 p0 = fp * o + vec2(-1.0, -1.0) * o;
-    vec2 p1 = p0 + vec2(-1.0, 2.0) * o;
-    vec2 p2 = p0 + vec2(1.0, 2.0) * o;
-    vec2 p3 = p0 + vec2(0.0, 4.0) * o;
+    // The 12 taps are sampled directly by texel offset. The reference uses
+    // gather4 and relies on its component order; doing it per tap keeps the
+    // kernel explicit and cannot be misaligned.
+    vec3 cB = tapAt(fp, vec2(0.0, -1.0), inSize);
+    vec3 cC = tapAt(fp, vec2(1.0, -1.0), inSize);
+    vec3 cE = tapAt(fp, vec2(-1.0, 0.0), inSize);
+    vec3 cF = tapAt(fp, vec2(0.0, 0.0), inSize);
+    vec3 cG = tapAt(fp, vec2(1.0, 0.0), inSize);
+    vec3 cH = tapAt(fp, vec2(2.0, 0.0), inSize);
+    vec3 cI = tapAt(fp, vec2(-1.0, 1.0), inSize);
+    vec3 cJ = tapAt(fp, vec2(0.0, 1.0), inSize);
+    vec3 cK = tapAt(fp, vec2(1.0, 1.0), inSize);
+    vec3 cLt = tapAt(fp, vec2(2.0, 1.0), inSize);
+    vec3 cN = tapAt(fp, vec2(0.0, 2.0), inSize);
+    vec3 cO = tapAt(fp, vec2(1.0, 2.0), inSize);
 
-    vec4 bczzR, bczzG, bczzB;
-    vec4 ijfeR, ijfeG, ijfeB;
-    vec4 klhgR, klhgG, klhgB;
-    vec4 zzonR, zzonG, zzonB;
-    gatherAt(p0, bczzR, bczzG, bczzB);
-    gatherAt(p1, ijfeR, ijfeG, ijfeB);
-    gatherAt(p2, klhgR, klhgG, klhgB);
-    gatherAt(p3, zzonR, zzonG, zzonB);
-
-    vec4 bczzL = bczzB * 0.5 + (bczzR * 0.5 + bczzG);
-    vec4 ijfeL = ijfeB * 0.5 + (ijfeR * 0.5 + ijfeG);
-    vec4 klhgL = klhgB * 0.5 + (klhgR * 0.5 + klhgG);
-    vec4 zzonL = zzonB * 0.5 + (zzonR * 0.5 + zzonG);
-
-    float bL = bczzL.x;
-    float cL = bczzL.y;
-    float iL = ijfeL.x;
-    float jL = ijfeL.y;
-    float fL = ijfeL.z;
-    float eL = ijfeL.w;
-    float kL = klhgL.x;
-    float lL = klhgL.y;
-    float hL = klhgL.z;
-    float gL = klhgL.w;
-    float oL = zzonL.z;
-    float nL = zzonL.w;
+    float bL = luma(cB), cL = luma(cC);
+    float eL = luma(cE), fL = luma(cF), gL = luma(cG), hL = luma(cH);
+    float iL = luma(cI), jL = luma(cJ), kL = luma(cK), lL = luma(cLt);
+    float nL = luma(cN), oL = luma(cO);
 
     vec2  dir = vec2(0.0);
     float len = 0.0;
@@ -155,27 +152,25 @@ void main()
     float lob     = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
     float clp     = 1.0 / max(lob, 1.0e-8);
 
-    vec3 min4 = min(min(vec3(ijfeR.z, ijfeG.z, ijfeB.z), vec3(klhgR.w, klhgG.w, klhgB.w)), vec3(ijfeR.y, ijfeG.y, ijfeB.y));
-    min4      = min(min4, vec3(klhgR.x, klhgG.x, klhgB.x));
-    vec3 max4 = max(max(vec3(ijfeR.z, ijfeG.z, ijfeB.z), vec3(klhgR.w, klhgG.w, klhgB.w)), vec3(ijfeR.y, ijfeG.y, ijfeB.y));
-    max4      = max(max4, vec3(klhgR.x, klhgG.x, klhgB.x));
+    vec3 min4 = min(min(cF, cG), min(cJ, cK));
+    vec3 max4 = max(max(cF, cG), max(cJ, cK));
 
     vec3  aC = vec3(0.0);
     float aW = 0.0;
-    easuTap(aC, aW, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, vec3(bczzR.x, bczzG.x, bczzB.x));
-    easuTap(aC, aW, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, vec3(bczzR.y, bczzG.y, bczzB.y));
-    easuTap(aC, aW, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, vec3(ijfeR.x, ijfeG.x, ijfeB.x));
-    easuTap(aC, aW, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, vec3(ijfeR.y, ijfeG.y, ijfeB.y));
-    easuTap(aC, aW, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, vec3(ijfeR.z, ijfeG.z, ijfeB.z));
-    easuTap(aC, aW, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, vec3(ijfeR.w, ijfeG.w, ijfeB.w));
-    easuTap(aC, aW, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, vec3(klhgR.x, klhgG.x, klhgB.x));
-    easuTap(aC, aW, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, vec3(klhgR.y, klhgG.y, klhgB.y));
-    easuTap(aC, aW, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, vec3(klhgR.z, klhgG.z, klhgB.z));
-    easuTap(aC, aW, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, vec3(klhgR.w, klhgG.w, klhgB.w));
-    easuTap(aC, aW, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, vec3(zzonR.z, zzonG.z, zzonB.z));
-    easuTap(aC, aW, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, vec3(zzonR.w, zzonG.w, zzonB.w));
+    easuTap(aC, aW, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, cB);
+    easuTap(aC, aW, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, cC);
+    easuTap(aC, aW, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, cI);
+    easuTap(aC, aW, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, cJ);
+    easuTap(aC, aW, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, cF);
+    easuTap(aC, aW, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, cE);
+    easuTap(aC, aW, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, cK);
+    easuTap(aC, aW, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, cLt);
+    easuTap(aC, aW, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, cH);
+    easuTap(aC, aW, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, cG);
+    easuTap(aC, aW, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, cO);
+    easuTap(aC, aW, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, cN);
 
-    vec3 pix = min(max4, max(min4, aC * (1.0 / max(aW, 1.0e-8))));
+    vec3  pix   = min(max4, max(min4, aC * (1.0 / max(aW, 1.0e-8))));
     float alpha = textureLod(img, textureCoord, 0.0).a;
-    fragColor = vec4(pix, alpha);
+    fragColor   = vec4(pix, alpha);
 }

@@ -40,6 +40,12 @@ jobs:
       - name: Build (x11 backend disabled)
         run: ninja -C build-nox11
 
+
+      - name: Run the EASU CPU invariant tests
+        run: |
+          cc -O2 -Wall -o easu_cpu_test tools/easu_cpu_test.c -lm
+          ./easu_cpu_test
+
       - name: Stage artifacts
         run: |
           mkdir -p out/${{ matrix.arch }}
