@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    branches: [ master, 'feat/**' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build g++ pkg-config \
+            glslang-tools libvulkan-dev libx11-dev
+
+      - name: Configure (x11 backend enabled)
+        run: meson setup build-x11 --buildtype=release -Dappend_libdir_vkbasalt=true
+
+      - name: Build (x11 backend enabled)
+        run: ninja -C build-x11
+
+      # The glibc/proot path from docs/TERMUX_GLIBC.md: no libX11, hotkey disabled
+      - name: Configure (x11 backend disabled)
+        run: meson setup build-nox11 --buildtype=release -Dappend_libdir_vkbasalt=true -Dx11=false
+
+      - name: Build (x11 backend disabled)
+        run: ninja -C build-nox11
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p out/${{ matrix.arch }}
+          cp build-x11/src/libvkbasalt.so out/${{ matrix.arch }}/libvkbasalt.so
+          cp build-x11/config/vkBasalt.json out/${{ matrix.arch }}/vkBasalt.json
+          cp config/vkBasalt.conf out/${{ matrix.arch }}/vkBasalt.conf
+          ls -l out/${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vkbasalt-${{ matrix.arch }}
+          path: out/${{ matrix.arch }}
+          if-no-files-found: error
