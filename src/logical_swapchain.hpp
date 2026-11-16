@@ -21,9 +21,12 @@ namespace vkBasalt
         LogicalDevice*                       pLogicalDevice;
         VkSwapchainCreateInfoKHR             swapchainCreateInfo;
         VkExtent2D                           imageExtent;
+        VkExtent2D                           renderExtent;
         VkFormat                             format;
         uint32_t                             imageCount;
         std::vector<VkImage>                 images;
+        std::vector<VkImage>                 renderImages;
+        VkDeviceMemory                       renderImageMemory;
         std::vector<VkImage>                 fakeImages;
         std::vector<VkCommandBuffer>         commandBuffersEffect;
         std::vector<VkCommandBuffer>         commandBuffersNoEffect;
