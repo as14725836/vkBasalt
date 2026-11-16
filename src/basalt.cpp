@@ -345,6 +345,14 @@ namespace vkBasalt
                       + std::to_string((unsigned long long)surface));
 
         pSurfaceCapabilities->currentExtent = scaled;
+
+        // Applications clamp the extent they ask for to [minImageExtent, maxImageExtent]
+        // and some ignore currentExtent entirely (DXVK builds the swapchain from the
+        // window size). Pinning min/max to the scaled extent leaves them no choice.
+        pSurfaceCapabilities->minImageExtent = scaled;
+        pSurfaceCapabilities->maxImageExtent = scaled;
+
+        Logger::debug("upscale: pinned min/maxImageExtent to " + std::to_string(scaled.width) + "x" + std::to_string(scaled.height));
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL vkBasalt_GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice          physicalDevice,
